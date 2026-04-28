@@ -1,0 +1,144 @@
+import threading
+import time
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import RPi.GPIO as GPIO
+
+# --- GPIO SETUP ---
+RELAY_PIN = 5
+LED_GREEN = 19
+LED_BLUE = 20
+LED_RED = 21
+
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+
+GPIO.setup(RELAY_PIN, GPIO.OUT)
+GPIO.setup(LED_GREEN, GPIO.OUT)
+GPIO.setup(LED_BLUE, GPIO.OUT)
+GPIO.setup(LED_RED, GPIO.OUT)
+
+# Počiatočné nastavenie: Relé vypnuté (1), LEDky nesvietia (0)
+GPIO.output(RELAY_PIN, 1)
+GPIO.output(LED_GREEN, 0); GPIO.output(LED_BLUE, 0); GPIO.output(LED_RED, 0)
+
+# --- KONFIGURÁCIA ---
+LIGHT_THRESHOLD = 75.0
+TEMPERATURE_THRESHOLD = 5.0
+HUMIDITY_THRESHOLD = 60.0
+LIMIT_ODPOJENIA = 60 
+LIMIT_WEB_TIMEOUT = 300 # Sekundy, po ktorých manuál prepne späť na auto
+
+# LEGENDA STAVOV:
+# 0 = Inicializácia / Systém čaká na prvé dáta
+# 1 = AUTOMATIKA: ZAPNUTÉ (Všetky podmienky splnené, fontána strieka)
+# 2 = AUTOMATIKA: VYPNUTÉ (Senzory zastavili fontánu - dážď, tma, zima...)
+# 3 = MANUÁL: ZAPNUTÉ (Používateľ vynútil chod cez web)
+# 4 = MANUÁL: VYPNUTÉ (Používateľ vynútil stopku cez web)
+# 99 = CHYBA (Strata spojenia s meteostanicou - Failsafe)
+
+latest_data = {
+    "dazd": 1,
+    "intenzita_svetla": 0,
+    "teplota": 0,
+    "vlhkost": 100,
+    "stav": 0, # Začíname v stave 0
+    "posledna_odozva": 0,
+    "posledna_web_odozva": 0
+}
+web_control = False
+
+app = Flask(__name__)
+CORS(app)
+
+def signalizacia_led():
+    s = latest_data["stav"]
+    if s == 99: # KRITICKÁ CHYBA
+        GPIO.output(LED_RED, 1); GPIO.output(LED_GREEN, 0); GPIO.output(LED_BLUE, 0)
+    elif s == 1 or s == 3: # CHOD (Zelená)
+        GPIO.output(LED_RED, 0); GPIO.output(LED_GREEN, 1); GPIO.output(LED_BLUE, 0)
+    else: # STANDBY / STOP (Modrá)
+        GPIO.output(LED_RED, 0); GPIO.output(LED_GREEN, 0); GPIO.output(LED_BLUE, 1)
+
+def beziaca_logika():
+    global web_control
+    while True:
+        teraz = time.time()
+        
+        # Ak uplynie timeout od posledného kliku na webe, vráť sa k automatike
+        if web_control and (teraz - latest_data["posledna_web_odozva"] > LIMIT_WEB_TIMEOUT):
+            web_control = False
+
+        # Kontrola, či meteostanica stále posiela dáta (Failsafe)
+        if latest_data["posledna_odozva"] != 0 and (teraz - latest_data["posledna_odozva"] > LIMIT_ODPOJENIA):
+            if latest_data["stav"] != 99:
+                GPIO.output(RELAY_PIN, 1) # Pri chybe okamžite vypni vodu
+                latest_data["stav"] = 99
+        
+        # Riadenie automatiky (beží len ak nie je zapnutý manuál a nie je chyba)
+        elif not web_control and latest_data["stav"] != 99:
+            if (latest_data["dazd"] == 1 or 
+                latest_data["intenzita_svetla"] < LIGHT_THRESHOLD or 
+                latest_data["teplota"] < TEMPERATURE_THRESHOLD or 
+                latest_data["vlhkost"] > HUMIDITY_THRESHOLD):
+                
+                GPIO.output(RELAY_PIN, 1) # Relé vypne fontánu
+                latest_data["stav"] = 2   # Stav: Auto-Vypnuté
+            else:
+                GPIO.output(RELAY_PIN, 0) # Relé zapne fontánu
+                latest_data["stav"] = 1   # Stav: Auto-Zapnuté
+        
+        signalizacia_led()
+        time.sleep(1)
+
+# --- FLASK ENDPOINTY ---
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    return jsonify(latest_data), 200
+
+@app.route('/data', methods=['POST'])
+def prijmi_data():
+    data = request.get_json()
+    if data:
+        latest_data["dazd"] = int(data.get("dazd", 1))
+        latest_data["intenzita_svetla"] = float(data.get("intenzita_svetla", 0))
+        latest_data["teplota"] = float(data.get("teplota", 0))
+        latest_data["vlhkost"] = float(data.get("vlhkost", 100))
+        latest_data["posledna_odozva"] = time.time()
+        
+        # Ak sa obnoví spojenie, zruš chybový stav 99
+        if latest_data["stav"] == 99:
+            latest_data["stav"] = 0
+            
+        return jsonify({"status": "ok"}), 200
+    return jsonify({"error": "data_error"}), 400
+
+@app.route("/manual", methods=["POST"])
+def manual():
+    global web_control
+    data = request.get_json()
+    akcia = data.get("manual", "").lower()
+    latest_data["posledna_web_odozva"] = time.time()
+
+    if akcia == "won":
+        web_control = True
+    elif akcia == "woff":
+        web_control = False
+    elif akcia == "on" and web_control:
+        GPIO.output(RELAY_PIN, 0)
+        latest_data["stav"] = 3 # Manuálne Zapnuté
+    elif akcia == "off" and web_control:
+        GPIO.output(RELAY_PIN, 1)
+        latest_data["stav"] = 4 # Manuálne Vypnuté
+    
+    return jsonify({"status": "ok"}), 200
+
+if __name__ == "__main__":
+    threading.Thread(target=beziaca_logika, daemon=True).start()
+    try:
+        app.run(host="0.0.0.0", port=5000)
+    finally:
+        # Bezpečný shutdown
+        GPIO.output(RELAY_PIN, 1)
+        GPIO.cleanup()
