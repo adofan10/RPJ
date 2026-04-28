@@ -1,0 +1,26 @@
+// funkcia na načítanie dát z RPI v pravidelnom cykle 
+async function updateStatus() {
+    try {
+        const response = await fetch("http://10.28.14.160:5000/status");
+        const data = await response.json();
+        // Senzory zaokrúhlené na 2 desatinné miesta
+        document.getElementById("temp").textContent = Math.round(data.teplota * 100) / 100;
+        document.getElementById("hum").textContent = Math.round(data.vlhkost * 100) / 100;
+        document.getElementById("light").textContent = Math.round(data.intenzita_svetla * 100) / 100;
+        document.getElementById("rain").textContent = data.dazd === 1 ? "Prší" : "Neprší";
+        // Stav čerpadla podľa čísel
+        const p = document.getElementById("pump");
+        switch (data.stav) {
+            case 0:  p.textContent = "Štartujem..."; break;
+            case 1:  p.textContent = "AUTO: ZAP"; break;
+            case 2:  p.textContent = "AUTO: VYP"; break;
+            case 3:  p.textContent = "MANUÁL: ZAP"; break;
+            case 4:  p.textContent = "MANUÁL: VYP"; break;
+            case 99: p.textContent = "CHYBA SPOJENIA"; break;
+        }
+    } catch (err) {
+        document.getElementById("pump").textContent = "OFFLINE";
+    }
+}
+setInterval(updateStatus, 2000);
+window.onload = updateStatus;
