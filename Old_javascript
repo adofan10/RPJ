@@ -1,0 +1,25 @@
+// funkcia na načítanie dát z RPI v pravidelnom cykle 
+async function updateStatus() {
+    try {
+        const response = await fetch("http://10.28.14.160:5000/status"); // endpoint Flask-u
+        if (!response.ok) throw new Error("Chyba spojenia");
+        const data = await response.json();
+        // Aktualizácia HTML prvkov
+        document.getElementById("temp").textContent = data.teplota ?? "--";
+        document.getElementById("hum").textContent = data.vlhkost ?? "--";
+        document.getElementById("light").textContent = data.intenzita_svetla ?? "--";
+        document.getElementById("rain").textContent = data.dazd == 1 ? "Prší" : "Neprší";
+        document.getElementById("pump").textContent = data.stav ?? "--";
+    } catch (err) {
+        console.error("Chyba pri načítaní dát:", err);
+        document.getElementById("pump").textContent = "Chyba spojenia";
+        document.getElementById("temp").textContent = "--";
+        document.getElementById("hum").textContent = "--";
+        document.getElementById("light").textContent = "--";
+        document.getElementById("rain").textContent = "--";
+    }
+}
+// Spusti automatické obnovovanie každú sekundu
+setInterval(updateStatus, 1000);
+// Voliteľne načítanie hneď po načítaní stránky
+window.addEventListener("load", updateStatus);
