@@ -23,6 +23,14 @@ HUMIDITY_THRESHOLD = 60.0
 LIMIT_ODPOJENIA = 60 
 LIMIT_WEB_TIMEOUT = 60 # Nastavené na 60s podľa požiadavky
 
+# LEGENDA STAVOV:
+# 0 = Inicializácia / Systém čaká na prvé dáta
+# 1 = AUTOMATIKA: ZAPNUTÉ (Všetky podmienky splnené, fontána strieka)
+# 2 = AUTOMATIKA: VYPNUTÉ (Senzory zastavili fontánu - dážď, tma, zima...)
+# 3 = MANUÁL: ZAPNUTÉ (Používateľ vynútil chod cez web)
+# 4 = MANUÁL: VYPNUTÉ (Používateľ vynútil stopku cez web)
+# 99 = CHYBA (Strata spojenia s meteostanicou - Failsafe)
+
 latest_data = {
     "dazd": 1,
     "intenzita_svetla": 0,
